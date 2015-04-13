@@ -19,6 +19,7 @@ use std::ffi::{AsOsStr, OsString};
 use std::path;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::marker::PhantomData;
 
 pub trait Encoder {
@@ -623,6 +624,21 @@ impl<T:Encodable> Encodable for Arc<T> {
 impl<T:Decodable+Send+Sync> Decodable for Arc<T> {
     fn decode<D: Decoder>(d: &mut D) -> Result<Arc<T>, D::Error> {
         Ok(Arc::new(try!(Decodable::decode(d))))
+    }
+}
+
+impl<T:Encodable> Encodable for RwLock<T> {
+    fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        match self.try_read() {
+            Ok(r) => r.encode(s),
+            _ => Ok(()) 
+        }
+    }
+}
+
+impl<T:Decodable+Send+Sync> Decodable for RwLock<T> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<RwLock<T>, D::Error> {
+        Ok(RwLock::new(try!(Decodable::decode(d))))
     }
 }
 
