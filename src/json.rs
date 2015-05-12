@@ -241,7 +241,6 @@ use std::error::Error as StdError;
 use std::i64;
 use std::io::prelude::*;
 use std::mem::swap;
-use std::num::{Float, Int};
 use std::ops::Index;
 use std::str::FromStr;
 use std::string;
@@ -385,10 +384,6 @@ impl fmt::Debug for ErrorCode {
     }
 }
 
-fn io_error_to_error(err: io::Error) -> ParserError {
-    IoError(err)
-}
-
 impl StdError for DecoderError {
     fn description(&self) -> &str { "decoder error" }
     fn cause(&self) -> Option<&StdError> {
@@ -405,6 +400,12 @@ impl fmt::Display for DecoderError {
     }
 }
 
+impl From<ParserError> for DecoderError {
+    fn from(err: ParserError) -> DecoderError {
+        ParseError(From::from(err))
+    }
+}
+
 impl StdError for ParserError {
     fn description(&self) -> &str { "failed to parse json" }
 }
@@ -412,6 +413,12 @@ impl StdError for ParserError {
 impl fmt::Display for ParserError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
+    }
+}
+
+impl From<io::Error> for ParserError {
+    fn from(err: io::Error) -> ParserError {
+        IoError(err)
     }
 }
 
@@ -934,10 +941,7 @@ impl Json {
     pub fn from_reader(rdr: &mut io::Read) -> Result<Self, BuilderError> {
         let contents = {
             let mut c = Vec::new();
-            match rdr.read_to_end(&mut c) {
-                Ok(_)  => (),
-                Err(e) => return Err(io_error_to_error(e))
-            }
+            try!(rdr.read_to_end(&mut c));
             c
         };
         let s = match str::from_utf8(&contents).ok() {
@@ -1477,13 +1481,11 @@ impl<T: Iterator<Item = char>> Parser<T> {
             F64Value(res)
         } else {
             if neg {
-                let res = -(res as i64);
-
-                // Make sure we didn't underflow.
-                if res > 0 {
+                // Make sure we don't underflow.
+                if res > (i64::MAX as u64) + 1 {
                     Error(SyntaxError(InvalidNumber, self.line, self.col))
                 } else {
-                    I64Value(res)
+                    I64Value((!res + 1) as i64)
                 }
             } else {
                 U64Value(res)
@@ -1492,7 +1494,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
     }
 
     fn parse_u64(&mut self) -> Result<u64, ParserError> {
-        let mut accum = 0;
+        let mut accum: u64 = 0;
 
         match self.ch_or_null() {
             '0' => {
@@ -2952,7 +2954,7 @@ mod tests {
 
         let res: DecodeResult<i64> = super::decode("765.25252");
         assert_eq!(res, Err(ExpectedError("Integer".to_string(),
-                                          "765.25252".to_string())));
+                                          "765.2525199999999".to_string())));
     }
 
     #[test]
