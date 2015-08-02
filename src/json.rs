@@ -228,6 +228,14 @@
 //!     // foo: 13 (u64)
 //! }
 //! ```
+//!
+//! # The status of this library
+//!
+//! While this library is the standard way of working with JSON in Rust,
+//! there is a next-generation library called Serde that's in the works (it's
+//! faster, overcomes some design limitations of rustc-serialize and has more
+//! features). You might consider using it when starting new project or
+//! evaluating Rust JSON performance.
 
 use self::JsonEvent::*;
 use self::ErrorCode::*;
@@ -2546,10 +2554,8 @@ impl FromStr for Json {
 
 #[cfg(test)]
 mod tests {
-    extern crate test;
     use self::Animal::*;
     use self::DecodeEnum::*;
-    use self::test::Bencher;
     use {Encodable, Decodable};
     use super::Json::*;
     use super::ErrorCode::*;
@@ -2953,8 +2959,11 @@ mod tests {
         assert_eq!(v, i64::MAX);
 
         let res: DecodeResult<i64> = super::decode("765.25252");
-        assert_eq!(res, Err(ExpectedError("Integer".to_string(),
-                                          "765.2525199999999".to_string())));
+        match res {
+            Ok(..) => panic!("expected an error"),
+            Err(ExpectedError(ref s, _)) => assert_eq!(s, "Integer"),
+            Err(..) => panic!("expected an 'expected integer' error"),
+        }
     }
 
     #[test]
@@ -3874,6 +3883,23 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_decode_phantom_data() {
+        use std::marker::PhantomData;
+
+        #[derive(Debug, RustcDecodable, RustcEncodable, Eq, PartialEq)]
+        struct Foo<P> {
+            phantom_data: PhantomData<P>
+        }
+        
+        let f: Foo<u8> = Foo {
+            phantom_data: PhantomData
+        };
+        let s = super::encode(&f).unwrap();
+        let d: Foo<u8> = super::decode(&s).unwrap();
+        assert_eq!(f, d);
+    }
+
+    #[test]
     fn test_bad_json_stack_depleted() {
         use json;
         #[derive(Debug, RustcDecodable)]
@@ -3885,79 +3911,21 @@ mod tests {
         assert!(r.unwrap_err() == EOF);
     }
 
-    #[bench]
-    fn bench_streaming_small(b: &mut Bencher) {
-        b.iter( || {
-            let mut parser = Parser::new(
-                r#"{
-                    "a": 1.0,
-                    "b": [
-                        true,
-                        "foo\nbar",
-                        { "c": {"d": null} }
-                    ]
-                }"#.chars()
-            );
-            loop {
-                match parser.next() {
-                    None => return,
-                    _ => {}
-                }
-            }
-        });
-    }
-    #[bench]
-    fn bench_small(b: &mut Bencher) {
-        b.iter( || {
-            let _ = Json::from_str(r#"{
-                "a": 1.0,
-                "b": [
-                    true,
-                    "foo\nbar",
-                    { "c": {"d": null} }
-                ]
-            }"#);
-        });
-    }
-
-    #[bench]
-    fn bench_decode_hex_escape(b: &mut Bencher) {
-        let mut src = "\"".to_string();
-        for _ in 0..10 {
-            src.push_str("\\uF975\\uf9bc\\uF9A0\\uF9C4\\uF975\\uf9bc\\uF9A0\\uF9C4");
+    #[test]
+    fn fixed_length_array() {
+        #[derive(Debug, RustcDecodable, RustcEncodable, Eq, PartialEq)]
+        struct Foo {
+            a: [u8; 1],
+            b: [i32; 2],
+            c: [u64; 3],
         }
-        src.push_str("\"");
-        b.iter( || {
-            let _ = Json::from_str(&src);
-        });
-    }
-
-    fn big_json() -> string::String {
-        let mut src = "[\n".to_string();
-        for _ in 0..500 {
-            src.push_str(r#"{ "a": true, "b": null, "c":3.1415, "d": "Hello world", "e": \
-                            [1,2,3]},"#);
-        }
-        src.push_str("{}]");
-        return src;
-    }
-
-    #[bench]
-    fn bench_streaming_large(b: &mut Bencher) {
-        let src = big_json();
-        b.iter( || {
-            let mut parser = Parser::new(src.chars());
-            loop {
-                match parser.next() {
-                    None => return,
-                    _ => {}
-                }
-            }
-        });
-    }
-    #[bench]
-    fn bench_large(b: &mut Bencher) {
-        let src = big_json();
-        b.iter( || { let _ = Json::from_str(&src); });
+        let f = Foo {
+            a: [0],
+            b: [1, 2],
+            c: [3, 4, 5],
+        };
+        let s = super::encode(&f).unwrap();
+        let d = super::decode(&s).unwrap();
+        assert_eq!(f, d);
     }
 }
